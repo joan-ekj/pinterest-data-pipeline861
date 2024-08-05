@@ -58,57 +58,82 @@ class AWSDBConnector:
 new_connector = AWSDBConnector()
 
 def json_serial(obj):
-    """JSON serializer for objects not serializable by default json code"""
+    '''
+    This function serializes objects not seriliazable by default json code.
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        str: ISO formatted date string if obj is datetime or data.
+
+    Raises:
+        TypeError: If the obj is not serializable.
+
+    '''
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     raise TypeError ("Type %s not serializable" % type(obj))
 
-def send_to_kafka(topic, data):
-        invoke_url = f"https://dob1hsyi8a.execute-api.us-east-1.amazonaws.com/first/topics/{topic}"
-        headers = {'Content-Type': 'application/vnd.kafka.json.v2+json'}
-        response = requests.post(invoke_url, data=json.dumps(data, default=json_serial), headers=headers)
-        print(f"Sent to Kafka topic {topic}: {response.status_code} - {response.text}")
-        return response
+def send_to_kafka(topic, payload):
+    '''
+    This function sends data to the specified Kafka topic
 
+    Args:
+        topic (str): Kafka topic to send data  to.
+        payload (str): JSON string payload to send.
+     
+    '''
+    invoke_url = f"https://dob1hsyi8a.execute-api.us-east-1.amazonaws.com/first/topics/{topic}"
+    headers = {'Content-Type': 'application/vnd.kafka.json.v2+json'}
+    try:
+        response = requests.post(invoke_url, data=payload, headers=headers)
+        response.raise_for_status() 
+        print(f"Sent to Kafka topic {topic}: {response.status_code} - {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"Error sending to Kafka topic {topic}: {e}")
+
+def fetch_send_data(connection, table_name, topic):
+    '''
+    This function fetches a random row of data from specified table and sends it to a Kafka topic. 
+
+    Args: 
+        connection: Database connection (SQLAlchemy engine).
+        table_name (str): Name of the table to fetch data from.
+        topic (str): Kafka topic to send data to.
+
+    '''
+    random_row = random.randint(0, 11000)
+    query = text(f"SELECT * FROM {table_name} LIMIT {random_row}, 1")
+    result = connection.execute(query)
+
+    for row in result:
+        row_result = dict(row._mapping)
+        payload = json.dumps({
+            "records": [
+                {"value": row_result}
+            ]
+        }, default=json_serial)
+        send_to_kafka(topic, payload)
 
 def run_infinite_post_data_loop():
+    '''
+    This function runs on infinite loop to fetch data from the database and send it to Kafka. 
+    '''
+    engine = new_connector.create_db_connector()
     while True:
-        sleep(random.randrange(0, 2))
-        random_row = random.randint(0, 11000)
-        engine = new_connector.create_db_connector()
+        try:
+            sleep(random.randrange(0, 2))
+            with engine.connect() as connection:
+                fetch_send_data(connection, 'pinterest_data',"0affc011d3cf.pin" )
+                fetch_send_data(connection, 'geolocation_data',"0affc011d3cf.geo" )
+                fetch_send_data(connection, 'user_data',"0affc011d3cf.user" )
 
-        with engine.connect() as connection:
-
-            pin_string = text(f"SELECT * FROM pinterest_data LIMIT {random_row}, 1")
-            pin_selected_row = connection.execute(pin_string)
-            
-            for row in pin_selected_row:
-                pin_result = dict(row._mapping)
-                send_to_kafka("0affc011d3cf.pin", pin_result)
-
-            geo_string = text(f"SELECT * FROM geolocation_data LIMIT {random_row}, 1")
-            geo_selected_row = connection.execute(geo_string)
-            
-            for row in geo_selected_row:
-                geo_result = dict(row._mapping)
-                send_to_kafka("0affc011d3cf.geo", geo_result)
-
-            user_string = text(f"SELECT * FROM user_data LIMIT {random_row}, 1")
-            user_selected_row = connection.execute(user_string)
-            
-            for row in user_selected_row:
-                user_result = dict(row._mapping)
-                send_to_kafka("0affc011d3cf.user", user_result)
-            
-            print(pin_result)
-            print(geo_result)
-            print(user_result)
-
-
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+                
 if __name__ == "__main__":
     run_infinite_post_data_loop()
     print('Working')
-    
-    
 
 
