@@ -15,7 +15,7 @@ By the end of this project, I will have:
 1) AWS Services: EC2, MSK, S3, API Gateway, Kinesis, MWAA
 2) Apache Kafka: Message brokering for data streams
 3) Databricks: Data processing and analytics
-4) Apache Spark: Distributed data processing
+4) Apache Spark: Data processing
 5) AWS MWAA (Managed Workflows for Apache Airflow): Workflow orchestration and automation of data pipelines
 
 ## Project Structure
