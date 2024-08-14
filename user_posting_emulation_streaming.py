@@ -2,32 +2,41 @@ import requests
 from time import sleep
 import random
 import json
-import sqlalchemy
 from sqlalchemy import text
-from datetime import datetime, date
+from datetime import date, datetime
+from aws_db_connector import AWSDBConnector
 
 random.seed(100)
-
-class AWSDBConnector:
-    def __init__(self):
-        self.HOST = "pinterestdbreadonly.cq2e8zno855e.eu-west-1.rds.amazonaws.com"
-        self.USER = 'project_user'
-        self.PASSWORD = ':t%;yCY3Yjg'
-        self.DATABASE = 'pinterest_data'
-        self.PORT = 3306
-        
-    def create_db_connector(self):
-        engine = sqlalchemy.create_engine(f"mysql+pymysql://{self.USER}:{self.PASSWORD}@{self.HOST}:{self.PORT}/{self.DATABASE}?charset=utf8mb4")
-        return engine
-
 new_connector = AWSDBConnector()
 
 def json_serial(obj):
+    '''
+    This function serializes objects not seriliazable by default json code.
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        str: ISO formatted date string if obj is datetime or data.
+
+    Raises:
+        TypeError: If the obj is not serializable.
+
+    '''
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     raise TypeError ("Type %s not serializable" % type(obj))
 
+
 def send_to_kinesis(stream_name, payload):
+    '''
+    This function sends data to the specified Kinesis stream.
+
+    Args:
+        stream_name (str): Kinesis stream to send data to.
+        payload (str): JSON string payload to send.
+     
+    '''
     invoke_url = f"https://dob1hsyi8a.execute-api.us-east-1.amazonaws.com/second/streams/{stream_name}/record"
     headers = {'Content-Type': 'application/json'}
     try:
@@ -37,57 +46,46 @@ def send_to_kinesis(stream_name, payload):
     except requests.exceptions.RequestException as e:
         print(f"Error sending to stream {stream_name}: {e}")
 
+
+def fetch_and_stream(connection, table_name, stream_name):
+    '''
+    Fetch a random row of data from the specified table and send it to the specified Kinesis stream.
+
+    Args:
+        connection: Database connection (SQLAlchemy engine).
+        table_name (str): Name of the table to fetch data from.
+        stream_name (str): Kinesis stream name to send data to.
+
+    '''
+    random_row = random.randint(0, 11000)
+    query = text(f"SELECT * FROM {table_name} LIMIT {random_row}, 1")
+    result = connection.execute(query)
+
+    for row in result:
+        row_result = dict(row._mapping)
+        payload = json.dumps({
+            "StreamName": stream_name,
+            "Data": row_result,
+            "PartitionKey": "stream-data"
+        }, default=json_serial)
+        send_to_kinesis(stream_name, payload)
+
 def run_infinite_post_data_loop():
+    '''
+    This function runs on infinite loop to fetch data from the database and send it to Kinesis streams. 
+
+    '''
+    engine = new_connector.create_db_connector()
     while True:
-        sleep(random.randrange(0, 2))
-        random_row = random.randint(0, 11000)
-        engine = new_connector.create_db_connector()
-
-        with engine.connect() as connection:
-
-            
-            pin_string = text(f"SELECT * FROM pinterest_data LIMIT {random_row}, 1")
-            pin_selected_row = connection.execute(pin_string)
-            
-            for row in pin_selected_row:
-                pin_result = dict(row._mapping)
-                payload = json.dumps({
-                            "StreamName": "streaming-0affc011d3cf-pin",
-                            "Data": pin_result,
-                            "PartitionKey": "stream-data"
-                        }, default=json_serial)
-                send_to_kinesis("streaming-0affc011d3cf-pin", payload)
-
-        
-            geo_string = text(f"SELECT * FROM geolocation_data LIMIT {random_row}, 1")
-            geo_selected_row = connection.execute(geo_string)
-            
-            for row in geo_selected_row:
-                geo_result = dict(row._mapping)
-                payload = json.dumps({
-                            "StreamName": "streaming-0affc011d3cf-geo",
-                            "Data": geo_result,
-                            "PartitionKey": "stream-data"
-                        }, default=json_serial)
-                send_to_kinesis("streaming-0affc011d3cf-geo", payload)
-        
-          
-            user_string = text(f"SELECT * FROM user_data LIMIT {random_row}, 1")
-            user_selected_row = connection.execute(user_string)
-            
-            for row in user_selected_row:
-                user_result = dict(row._mapping)
-                payload = json.dumps({
-                            "StreamName": "streaming-0affc011d3cf-user",
-                            "Data": user_result,
-                            "PartitionKey": "stream-data"
-                        }, default=json_serial)
-                send_to_kinesis("streaming-0affc011d3cf-user", payload)
-        
-            print(pin_result)
-            print(geo_result)
-            print(user_result)
-
+        try:
+          sleep(random.randrange(0, 2))
+          with engine.connect() as connection:
+               fetch_and_stream(connection, 'pinterest_data', "streaming-0affc011d3cf-pin")
+               fetch_and_stream(connection, 'geolocation_data', "streaming-0affc011d3cf-geo")
+               fetch_and_stream(connection, 'user_data', "streaming-0affc011d3cf-user")
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+                     
 if __name__ == "__main__":
     run_infinite_post_data_loop()
     print('Working')
